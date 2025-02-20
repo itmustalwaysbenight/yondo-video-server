@@ -9,31 +9,32 @@ const path = require('path');
 
 const execAsync = promisify(exec);
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3002;
 
 // Configure CORS - more permissive during development
 const corsOptions = {
-  origin: process.env.NODE_ENV === 'production'
-    ? [
-        process.env.FRONTEND_URL,
-        'https://yondo-video-analysis.vercel.app',
-        'http://localhost:3000',
-        'http://localhost:3001'
-      ].filter(Boolean)
-    : [
-        'http://localhost:3000',
-        'http://localhost:3001',
-        'https://localhost:3000',
-        'https://localhost:3001',
-        process.env.FRONTEND_URL
-      ].filter(Boolean),
-  methods: ['GET', 'POST'],
-  credentials: true
+  origin: [
+    'https://yondo-video-analysis.vercel.app',
+    'https://yondo-video-analysis-lake.vercel.app',
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:3002',
+    'https://localhost:3000',
+    'https://localhost:3001',
+    'https://localhost:3002',
+    process.env.FRONTEND_URL
+  ].filter(Boolean),
+  methods: ['GET', 'POST', 'OPTIONS'],
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Accept']
 };
 
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(morgan('dev'));
+
+// Add OPTIONS handler for preflight requests
+app.options('*', cors(corsOptions));
 
 // Ensure temp directory exists
 const tempDir = path.join(__dirname, 'temp');
