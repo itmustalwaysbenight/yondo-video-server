@@ -14,8 +14,8 @@ const PORT = process.env.PORT || 3001;
 // Configure CORS - more permissive during development
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production'
-    ? process.env.FRONTEND_URL
-    : ['http://localhost:3000', 'http://localhost:3001', process.env.FRONTEND_URL].filter(Boolean),
+    ? [process.env.FRONTEND_URL, 'http://localhost:3000', 'http://localhost:3001']
+    : ['http://localhost:3000', 'http://localhost:3001', process.env.FRONTEND_URL],
   methods: ['GET', 'POST'],
   credentials: true
 };
