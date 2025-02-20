@@ -1,12 +1,17 @@
 FROM node:18-slim
 
-# Install python3 and pip
+# Install system dependencies and Python
 RUN apt-get update && \
-    apt-get install -y python3 python3-pip ffmpeg && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y \
+    python3 \
+    python3-pip \
+    ffmpeg \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install yt-dlp
-RUN pip3 install yt-dlp
+# Install yt-dlp using wget (more reliable than pip in some environments)
+RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
 
 # Create app directory
 WORKDIR /usr/src/app
