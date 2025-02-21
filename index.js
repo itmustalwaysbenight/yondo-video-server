@@ -206,24 +206,24 @@ app.post('/download', async (req, res) => {
     const stat = fs.statSync(outputPath);
     console.log('Video file size:', stat.size);
 
-    // Create a data URL from the video file
-    const videoBuffer = fs.readFileSync(outputPath);
-    const videoBase64 = videoBuffer.toString('base64');
-    const videoUrl = `data:video/mp4;base64,${videoBase64}`;
+    // Stream the file instead of converting to base64
+    res.writeHead(200, {
+      'Content-Type': 'video/mp4',
+      'Content-Length': stat.size,
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type'
+    });
 
-    // Clean up the file
-    fs.unlinkSync(outputPath);
+    const readStream = fs.createReadStream(outputPath);
+    readStream.pipe(res);
 
-    // Send the response
-    res.json({
-      status: 'success',
-      videoUrl,
-      message: `Successfully downloaded video: ${title}`,
-      details: {
-        title,
-        fileSize: stat.size,
-        format: 'mp4'
-      }
+    // Clean up the file after streaming
+    readStream.on('end', () => {
+      fs.unlink(outputPath, (err) => {
+        if (err) console.error('Error deleting temp file:', err);
+      });
     });
 
   } catch (error) {
