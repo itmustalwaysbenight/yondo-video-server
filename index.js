@@ -93,13 +93,28 @@ async function initializeServer() {
 // Improve yt-dlp check
 async function checkYtDlp() {
   try {
-    const { stdout } = await execAsync('which yt-dlp');
-    console.log('yt-dlp location:', stdout.trim());
-    const { stdout: version } = await execAsync('yt-dlp --version');
+    // Get yt-dlp location
+    const { stdout: location } = await execAsync('which yt-dlp');
+    const ytdlpPath = location.trim();
+    console.log('yt-dlp location:', ytdlpPath);
+
+    // Verify we can execute it
+    await execAsync(`${ytdlpPath} --version`);
+    console.log('yt-dlp is executable');
+
+    // Get version info
+    const { stdout: version } = await execAsync(`${ytdlpPath} --version`);
     console.log('yt-dlp version:', version.trim());
+
+    // Test basic functionality
+    await execAsync(`${ytdlpPath} --help`);
+    console.log('yt-dlp help command works');
+
     return true;
   } catch (error) {
     console.error('yt-dlp check failed:', error);
+    console.error('Current PATH:', process.env.PATH);
+    console.error('Current directory:', process.cwd());
     return false;
   }
 }
@@ -132,15 +147,28 @@ app.post('/download', async (req, res) => {
     // Handle version check request
     if (url === 'version') {
       try {
-        const { stdout } = await execAsync('yt-dlp --version');
+        // Get both location and version
+        const [location, version] = await Promise.all([
+          execAsync('which yt-dlp').then(r => r.stdout.trim()),
+          execAsync('yt-dlp --version').then(r => r.stdout.trim())
+        ]);
+
+        // Test if we can execute yt-dlp
+        await execAsync(`${location} --help`);
+        
         return res.json({ 
-          version: stdout.trim(),
-          status: 'ok'
+          version,
+          location,
+          status: 'ok',
+          executable: true
         });
       } catch (error) {
+        console.error('Version check failed:', error);
         return res.status(500).json({
-          error: 'Failed to get yt-dlp version',
-          details: error.message
+          error: 'Failed to verify yt-dlp',
+          details: error.message,
+          path: process.env.PATH,
+          pwd: process.cwd()
         });
       }
     }
@@ -236,6 +264,69 @@ app.get('/debug', async (req, res) => {
   } catch (error) {
     res.status(500).json({
       error: 'Debug info collection failed',
+      details: error.message,
+      stack: error.stack
+    });
+  }
+});
+
+// Add yt-dlp debug endpoint
+app.get('/debug/ytdlp', async (req, res) => {
+  try {
+    const debugInfo = {
+      status: {
+        installed: false,
+        executable: false,
+        version: null,
+        location: null,
+        helpWorks: false
+      },
+      environment: {
+        PATH: process.env.PATH,
+        PWD: process.cwd(),
+        uid: process.getuid?.(),
+        gid: process.getgid?.(),
+        platform: process.platform,
+        arch: process.arch
+      },
+      tests: []
+    };
+
+    try {
+      // Test 1: Find yt-dlp
+      const { stdout: location } = await execAsync('which yt-dlp');
+      debugInfo.status.location = location.trim();
+      debugInfo.status.installed = true;
+      debugInfo.tests.push({ name: 'find_ytdlp', status: 'success', output: location.trim() });
+    } catch (e) {
+      debugInfo.tests.push({ name: 'find_ytdlp', status: 'error', error: e.message });
+    }
+
+    if (debugInfo.status.installed) {
+      try {
+        // Test 2: Check version
+        const { stdout: version } = await execAsync(`${debugInfo.status.location} --version`);
+        debugInfo.status.version = version.trim();
+        debugInfo.status.executable = true;
+        debugInfo.tests.push({ name: 'version_check', status: 'success', output: version.trim() });
+      } catch (e) {
+        debugInfo.tests.push({ name: 'version_check', status: 'error', error: e.message });
+      }
+
+      try {
+        // Test 3: Check help
+        const { stdout: help } = await execAsync(`${debugInfo.status.location} --help`);
+        debugInfo.status.helpWorks = true;
+        debugInfo.tests.push({ name: 'help_check', status: 'success', output: help.slice(0, 100) + '...' });
+      } catch (e) {
+        debugInfo.tests.push({ name: 'help_check', status: 'error', error: e.message });
+      }
+    }
+
+    res.json(debugInfo);
+  } catch (error) {
+    res.status(500).json({
+      error: 'yt-dlp debug info collection failed',
       details: error.message,
       stack: error.stack
     });
