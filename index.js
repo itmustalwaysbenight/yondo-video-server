@@ -45,30 +45,61 @@ let isServerReady = false;
 // Initialize server
 async function initializeServer() {
   try {
+    console.log('Starting server initialization...');
+    
     // Ensure temp directory exists
+    console.log('Creating temp directory...');
     await fs.mkdir(tempDir, { recursive: true });
     
     // Check yt-dlp installation
+    console.log('Checking yt-dlp installation...');
     const isYtDlpInstalled = await checkYtDlp();
+    
     if (!isYtDlpInstalled) {
-      console.error('yt-dlp not installed, attempting to install...');
-      await execAsync('pip install yt-dlp');
+      console.log('yt-dlp not installed, attempting installation...');
+      try {
+        // Try pip install first
+        await execAsync('pip install --user yt-dlp');
+      } catch (pipError) {
+        console.log('pip install failed, trying curl installation...');
+        try {
+          // If pip fails, try direct download
+          await execAsync('curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp');
+          await execAsync('chmod a+rx /usr/local/bin/yt-dlp');
+        } catch (curlError) {
+          console.error('Failed to install yt-dlp via curl:', curlError);
+          throw new Error('Failed to install yt-dlp after multiple attempts');
+        }
+      }
+      
+      // Verify installation
+      const verifyInstall = await checkYtDlp();
+      if (!verifyInstall) {
+        throw new Error('yt-dlp installation verification failed');
+      }
+      console.log('yt-dlp installed successfully');
+    } else {
+      console.log('yt-dlp is already installed');
     }
     
     isServerReady = true;
-    console.log('Server initialization complete');
+    console.log('Server initialization complete - ready to handle requests');
   } catch (error) {
     console.error('Server initialization failed:', error);
     throw error;
   }
 }
 
-// Check if yt-dlp is installed
+// Improve yt-dlp check
 async function checkYtDlp() {
   try {
-    await execAsync('yt-dlp --version');
+    const { stdout } = await execAsync('which yt-dlp');
+    console.log('yt-dlp location:', stdout.trim());
+    const { stdout: version } = await execAsync('yt-dlp --version');
+    console.log('yt-dlp version:', version.trim());
     return true;
   } catch (error) {
+    console.error('yt-dlp check failed:', error);
     return false;
   }
 }
@@ -79,10 +110,16 @@ app.post('/download', async (req, res) => {
   console.log('Request headers:', req.headers);
   
   if (!isServerReady) {
-    return res.status(503).json({
-      error: 'Server is still initializing',
-      details: 'Please wait a moment and try again'
-    });
+    // Check yt-dlp status
+    const ytDlpStatus = await checkYtDlp();
+    const serverState = {
+      ready: false,
+      ytDlpInstalled: ytDlpStatus,
+      message: 'Server is still initializing',
+      details: `Server state: ${ytDlpStatus ? 'yt-dlp installed' : 'yt-dlp not installed'}`
+    };
+    console.log('Server not ready:', serverState);
+    return res.status(503).json(serverState);
   }
   
   try {
@@ -92,6 +129,7 @@ app.post('/download', async (req, res) => {
       return res.status(400).json({ error: 'URL is required' });
     }
 
+    console.log('Starting video download for URL:', url);
     // Create a unique filename
     const timestamp = Date.now();
     const tempFilePath = path.join(tempDir, `video-${timestamp}.mp4`);
