@@ -189,7 +189,7 @@ app.post('/download', async (req, res) => {
     console.log('Video title:', title);
 
     // Download video using yt-dlp with progress
-    const command = `yt-dlp -f "bestvideo[ext=mp4][filesize<50M]+bestaudio[ext=m4a]/mp4" "${url}" -o "${outputPath}" --max-filesize 50M`;
+    const command = `yt-dlp -f "worst[ext=mp4]" "${url}" -o "${outputPath}" --max-filesize 10M --postprocessor-args "ffmpeg:-ss 0 -t 3 -vf scale=480:360"`;
     console.log('Download command:', command);
     
     await new Promise((resolve, reject) => {
