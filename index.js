@@ -160,14 +160,70 @@ app.post('/download', async (req, res) => {
 });
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  // Check yt-dlp status
+  const ytDlpStatus = await checkYtDlp();
+  
+  // Get environment info
+  let envInfo = {
+    NODE_ENV: process.env.NODE_ENV || 'development',
+    PATH: process.env.PATH,
+    PWD: process.env.PWD,
+    platform: process.platform,
+    arch: process.arch
+  };
+
   res.json({ 
     status: isServerReady ? 'ready' : 'initializing',
     version: process.env.npm_package_version || '1.0.0',
-    environment: process.env.NODE_ENV || 'development',
+    environment: envInfo,
     cors: corsOptions,
-    ready: isServerReady
+    ready: isServerReady,
+    ytdlp: {
+      installed: ytDlpStatus,
+      path: ytDlpStatus ? (await execAsync('which yt-dlp')).stdout.trim() : null,
+      version: ytDlpStatus ? (await execAsync('yt-dlp --version')).stdout.trim() : null
+    },
+    tempDir: {
+      path: tempDir,
+      exists: await fs.access(tempDir).then(() => true).catch(() => false)
+    }
   });
+});
+
+// Debug endpoint
+app.get('/debug', async (req, res) => {
+  try {
+    const debugInfo = {
+      environment: {
+        NODE_ENV: process.env.NODE_ENV,
+        PATH: process.env.PATH,
+        PWD: process.env.PWD,
+        platform: process.platform,
+        arch: process.arch
+      },
+      directories: {
+        current: process.cwd(),
+        temp: tempDir,
+        home: process.env.HOME
+      },
+      commands: {
+        ls: (await execAsync('ls -la')).stdout,
+        pwd: (await execAsync('pwd')).stdout,
+        which_python: await execAsync('which python3').then(r => r.stdout).catch(e => e.message),
+        which_pip: await execAsync('which pip3').then(r => r.stdout).catch(e => e.message),
+        which_ytdlp: await execAsync('which yt-dlp').then(r => r.stdout).catch(e => e.message)
+      }
+    };
+    
+    res.json(debugInfo);
+  } catch (error) {
+    res.status(500).json({
+      error: 'Debug info collection failed',
+      details: error.message,
+      stack: error.stack
+    });
+  }
 });
 
 // Initialize server before starting
