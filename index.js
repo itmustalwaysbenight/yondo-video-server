@@ -9,11 +9,12 @@ const crypto = require('crypto');
 
 // Initialize express app
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3002;
 
 console.log('Starting server initialization...');
 console.log('Environment:', process.env.NODE_ENV);
 console.log('Port:', PORT);
+console.log('Using PORT from environment:', process.env.PORT);
 
 // Configure CORS
 const corsOptions = {
@@ -134,6 +135,7 @@ app.post('/download', async (req, res) => {
   }
 
   console.log('Received download request for URL:', url);
+  let outputPath = null;
 
   try {
     // First verify the URL is accessible
@@ -154,7 +156,7 @@ app.post('/download', async (req, res) => {
 
     // Generate a unique filename
     const filename = crypto.randomBytes(16).toString('hex') + '.mp4';
-    const outputPath = path.join(tempDir, filename);
+    outputPath = path.join(tempDir, filename);
 
     console.log('Output path:', outputPath);
     console.log('Video title:', title);
@@ -163,32 +165,22 @@ app.post('/download', async (req, res) => {
     const command = `yt-dlp -f "bestvideo[ext=mp4][filesize<50M]+bestaudio[ext=m4a]/mp4" "${url}" -o "${outputPath}" --max-filesize 50M`;
     console.log('Download command:', command);
     
-    const download = exec(command);
-    let error = null;
-    let progress = 0;
-
-    download.stderr.on('data', (data) => {
-      console.log('Download progress:', data);
-      // Extract progress percentage if available
-      const match = data.toString().match(/(\d+\.?\d*)%/);
-      if (match) {
-        progress = parseFloat(match[1]);
-      }
-    });
-
-    download.on('error', (err) => {
-      error = err;
-      console.error('Download error:', err);
-      if (!res.headersSent) {
-        res.status(500).json({ 
-          status: 'error',
-          error: 'Download failed',
-          details: err.message 
-        });
-      }
-    });
-
     await new Promise((resolve, reject) => {
+      const download = exec(command);
+      
+      download.stdout.on('data', (data) => {
+        console.log('stdout:', data);
+      });
+
+      download.stderr.on('data', (data) => {
+        console.log('stderr:', data);
+      });
+
+      download.on('error', (err) => {
+        console.error('Download process error:', err);
+        reject(err);
+      });
+
       download.on('exit', (code) => {
         if (code !== 0) {
           console.error(`Download process exited with code ${code}`);
@@ -199,6 +191,7 @@ app.post('/download', async (req, res) => {
       });
     });
 
+    // Verify the file exists and get its size
     if (!fs.existsSync(outputPath)) {
       throw new Error('Video file not found after download');
     }
@@ -206,7 +199,7 @@ app.post('/download', async (req, res) => {
     const stat = fs.statSync(outputPath);
     console.log('Video file size:', stat.size);
 
-    // Stream the file instead of converting to base64
+    // Stream the file
     res.writeHead(200, {
       'Content-Type': 'video/mp4',
       'Content-Length': stat.size,
@@ -217,17 +210,39 @@ app.post('/download', async (req, res) => {
     });
 
     const readStream = fs.createReadStream(outputPath);
+    
+    readStream.on('error', (err) => {
+      console.error('Error streaming file:', err);
+      if (!res.headersSent) {
+        res.status(500).json({
+          status: 'error',
+          error: 'Error streaming video file'
+        });
+      }
+    });
+
     readStream.pipe(res);
 
     // Clean up the file after streaming
     readStream.on('end', () => {
       fs.unlink(outputPath, (err) => {
         if (err) console.error('Error deleting temp file:', err);
+        else console.log('Temp file deleted successfully');
       });
     });
 
   } catch (error) {
     console.error('Server error:', error);
+    // Clean up the output file if it exists
+    if (outputPath && fs.existsSync(outputPath)) {
+      try {
+        fs.unlinkSync(outputPath);
+        console.log('Cleaned up temp file after error');
+      } catch (cleanupError) {
+        console.error('Error cleaning up temp file:', cleanupError);
+      }
+    }
+    
     if (!res.headersSent) {
       res.status(500).json({ 
         status: 'error',

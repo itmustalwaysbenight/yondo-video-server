@@ -26,5 +26,8 @@ COPY . .
 # Create temp directory
 RUN mkdir -p temp
 
-EXPOSE 3001
+# Default to port 3002 for local development, but allow override via PORT env var
+ENV PORT=3002
+EXPOSE ${PORT}
+
 CMD [ "npm", "start" ] 
