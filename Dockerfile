@@ -1,31 +1,30 @@
 FROM node:18-slim
 
-# Install required packages
+# Install system dependencies and Python
 RUN apt-get update && \
-    apt-get install -y python3 python3-pip curl && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y \
+    python3 \
+    python3-pip \
+    ffmpeg \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install yt-dlp
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+# Install yt-dlp using wget (more reliable than pip in some environments)
+RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
 
 # Create app directory
 WORKDIR /usr/src/app
 
-# Copy package files
+# Install app dependencies
 COPY package*.json ./
+RUN npm install
 
-# Install dependencies
-RUN npm ci
-
-# Copy app source
+# Bundle app source
 COPY . .
 
 # Create temp directory
-RUN mkdir -p temp && chmod 777 temp
+RUN mkdir -p temp
 
-# Expose port
-EXPOSE 10000
-
-# Start the server
-CMD ["npm", "start"] 
+EXPOSE 3001
+CMD [ "npm", "start" ] 
