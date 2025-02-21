@@ -9,7 +9,11 @@ const crypto = require('crypto');
 
 // Initialize express app
 const app = express();
-const PORT = process.env.PORT || 3002;
+const PORT = process.env.PORT || 3000;
+
+console.log('Starting server initialization...');
+console.log('Environment:', process.env.NODE_ENV);
+console.log('Port:', PORT);
 
 // Configure CORS
 const corsOptions = {
@@ -41,12 +45,14 @@ app.use(morgan('dev'));
 
 // Create temp directory if it doesn't exist
 const tempDir = path.join(__dirname, 'temp');
+console.log('Creating temp directory...');
 if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir);
 }
 
 // Check yt-dlp installation
 async function checkYtDlp() {
+  console.log('Checking yt-dlp installation...');
   return new Promise((resolve, reject) => {
     exec('which yt-dlp', (error, stdout, stderr) => {
       if (error) {
@@ -65,6 +71,7 @@ async function checkYtDlp() {
           return;
         }
         console.log('yt-dlp version:', stdout.trim());
+        console.log('yt-dlp is already installed');
         resolve(true);
       });
     });
@@ -230,9 +237,28 @@ app.post('/download', async (req, res) => {
   }
 });
 
-// Start server
-app.listen(PORT, () => {
+console.log('Server initialization complete - ready to handle requests');
+
+// Start server with error handling
+const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log('Environment:', process.env.NODE_ENV);
   console.log('CORS origins:', JSON.stringify(corsOptions.origin));
+}).on('error', (error) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use. Please try a different port.`);
+    process.exit(1);
+  } else {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+});
+
+// Handle graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('Received SIGTERM signal. Shutting down gracefully...');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
 });
