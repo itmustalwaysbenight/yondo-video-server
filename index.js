@@ -138,10 +138,13 @@ app.post('/download', async (req, res) => {
   try {
     // First verify the URL is accessible
     const verifyCommand = `yt-dlp --no-download --get-title "${url}"`;
+    console.log('Verifying URL with command:', verifyCommand);
+    
     const title = await new Promise((resolve, reject) => {
       exec(verifyCommand, (error, stdout, stderr) => {
         if (error) {
           console.error('Error verifying video:', error);
+          console.error('stderr:', stderr);
           reject(new Error('Invalid or inaccessible video URL'));
           return;
         }
@@ -158,6 +161,7 @@ app.post('/download', async (req, res) => {
 
     // Download video using yt-dlp with progress
     const command = `yt-dlp -f "bestvideo[ext=mp4][filesize<50M]+bestaudio[ext=m4a]/mp4" "${url}" -o "${outputPath}" --max-filesize 50M`;
+    console.log('Download command:', command);
     
     const download = exec(command);
     let error = null;
@@ -184,45 +188,42 @@ app.post('/download', async (req, res) => {
       }
     });
 
-    download.on('exit', (code) => {
-      if (code !== 0) {
-        if (!res.headersSent) {
-          res.status(500).json({ 
-            status: 'error',
-            error: 'Download failed',
-            details: `Process exited with code ${code}` 
-          });
+    await new Promise((resolve, reject) => {
+      download.on('exit', (code) => {
+        if (code !== 0) {
+          console.error(`Download process exited with code ${code}`);
+          reject(new Error(`Process exited with code ${code}`));
+          return;
         }
-        return;
-      }
-
-      if (!fs.existsSync(outputPath)) {
-        if (!res.headersSent) {
-          res.status(500).json({ 
-            status: 'error',
-            error: 'Video file not found after download' 
-          });
-        }
-        return;
-      }
-
-      // Stream the file to the client
-      const stat = fs.statSync(outputPath);
-      res.writeHead(200, {
-        'Content-Type': 'video/mp4',
-        'Content-Length': stat.size,
-        'Content-Disposition': `attachment; filename="${filename}"`,
+        resolve();
       });
+    });
 
-      const readStream = fs.createReadStream(outputPath);
-      readStream.pipe(res);
+    if (!fs.existsSync(outputPath)) {
+      throw new Error('Video file not found after download');
+    }
 
-      readStream.on('end', () => {
-        // Clean up the file after streaming
-        fs.unlink(outputPath, (err) => {
-          if (err) console.error('Error deleting temp file:', err);
-        });
-      });
+    const stat = fs.statSync(outputPath);
+    console.log('Video file size:', stat.size);
+
+    // Create a data URL from the video file
+    const videoBuffer = fs.readFileSync(outputPath);
+    const videoBase64 = videoBuffer.toString('base64');
+    const videoUrl = `data:video/mp4;base64,${videoBase64}`;
+
+    // Clean up the file
+    fs.unlinkSync(outputPath);
+
+    // Send the response
+    res.json({
+      status: 'success',
+      videoUrl,
+      message: `Successfully downloaded video: ${title}`,
+      details: {
+        title,
+        fileSize: stat.size,
+        format: 'mp4'
+      }
     });
 
   } catch (error) {
