@@ -147,6 +147,11 @@ app.post('/download', async (req, res) => {
       return res.status(400).json({ error: 'URL is required' });
     }
 
+    // Validate TikTok URL
+    if (!url.match(/^https?:\/\/((?:vm|vt|www)\.)?tiktok\.com/)) {
+      return res.status(400).json({ error: 'Invalid TikTok URL' });
+    }
+
     // Handle version check request
     if (url === 'version') {
       try {
@@ -195,8 +200,26 @@ app.post('/download', async (req, res) => {
     const tempFilePath = path.join(tempDir, `video-${timestamp}.mp4`);
     console.log('[Download] Temp file path:', tempFilePath);
 
+    // First check if the video is available
+    try {
+      console.log('[Download] Checking video availability...');
+      const { stdout: info } = await execAsync(`yt-dlp --dump-json "${url}" --no-download`);
+      const videoInfo = JSON.parse(info);
+      console.log('[Download] Video info:', {
+        id: videoInfo.id,
+        title: videoInfo.title,
+        duration: videoInfo.duration
+      });
+    } catch (error) {
+      console.error('[Download] Video availability check failed:', error);
+      return res.status(500).json({
+        error: 'Failed to verify video availability',
+        details: error.message
+      });
+    }
+
     // Download video using yt-dlp with more verbose output
-    const command = `yt-dlp -f "best[ext=mp4]" "${url}" -o "${tempFilePath}" --no-playlist`;
+    const command = `yt-dlp -f "best[ext=mp4]" "${url}" -o "${tempFilePath}" --no-playlist --no-warnings --no-progress`;
     console.log('[Download] Executing command:', command);
     
     try {
@@ -251,7 +274,8 @@ app.post('/download', async (req, res) => {
 
   } catch (error) {
     console.error('[Download] Unhandled error:', error);
-    res.status(500).json({ 
+    // Ensure we always return valid JSON
+    return res.status(500).json({ 
       error: 'Failed to download video',
       details: error.message,
       type: error.constructor.name
