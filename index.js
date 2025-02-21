@@ -38,7 +38,30 @@ app.options('*', cors(corsOptions));
 
 // Ensure temp directory exists
 const tempDir = path.join(__dirname, 'temp');
-fs.mkdir(tempDir, { recursive: true }).catch(console.error);
+
+// Add startup state tracking
+let isServerReady = false;
+
+// Initialize server
+async function initializeServer() {
+  try {
+    // Ensure temp directory exists
+    await fs.mkdir(tempDir, { recursive: true });
+    
+    // Check yt-dlp installation
+    const isYtDlpInstalled = await checkYtDlp();
+    if (!isYtDlpInstalled) {
+      console.error('yt-dlp not installed, attempting to install...');
+      await execAsync('pip install yt-dlp');
+    }
+    
+    isServerReady = true;
+    console.log('Server initialization complete');
+  } catch (error) {
+    console.error('Server initialization failed:', error);
+    throw error;
+  }
+}
 
 // Check if yt-dlp is installed
 async function checkYtDlp() {
@@ -51,24 +74,22 @@ async function checkYtDlp() {
 }
 
 app.post('/download', async (req, res) => {
+  // Add CORS debug logging
+  console.log('Received request from origin:', req.headers.origin);
+  console.log('Request headers:', req.headers);
+  
+  if (!isServerReady) {
+    return res.status(503).json({
+      error: 'Server is still initializing',
+      details: 'Please wait a moment and try again'
+    });
+  }
+  
   try {
     const { url } = req.body;
     
     if (!url) {
       return res.status(400).json({ error: 'URL is required' });
-    }
-
-    // Check if yt-dlp is installed
-    const isYtDlpInstalled = await checkYtDlp();
-    if (!isYtDlpInstalled) {
-      return res.status(500).json({ 
-        error: 'yt-dlp is not installed on the server',
-        installInstructions: {
-          mac: 'brew install yt-dlp',
-          windows: 'choco install yt-dlp',
-          linux: 'pip install yt-dlp'
-        }
-      });
     }
 
     // Create a unique filename
@@ -103,15 +124,24 @@ app.post('/download', async (req, res) => {
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ 
-    status: 'ok',
+    status: isServerReady ? 'ready' : 'initializing',
     version: process.env.npm_package_version || '1.0.0',
     environment: process.env.NODE_ENV || 'development',
-    cors: corsOptions
+    cors: corsOptions,
+    ready: isServerReady
   });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV}`);
-  console.log(`CORS origins: ${JSON.stringify(corsOptions.origin)}`);
-}); 
+// Initialize server before starting
+initializeServer()
+  .then(() => {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server running on port ${PORT}`);
+      console.log(`Environment: ${process.env.NODE_ENV}`);
+      console.log(`CORS origins: ${JSON.stringify(corsOptions.origin)}`);
+    });
+  })
+  .catch(error => {
+    console.error('Failed to initialize server:', error);
+    process.exit(1);
+  }); 
