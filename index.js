@@ -129,6 +129,22 @@ app.post('/download', async (req, res) => {
       return res.status(400).json({ error: 'URL is required' });
     }
 
+    // Handle version check request
+    if (url === 'version') {
+      try {
+        const { stdout } = await execAsync('yt-dlp --version');
+        return res.json({ 
+          version: stdout.trim(),
+          status: 'ok'
+        });
+      } catch (error) {
+        return res.status(500).json({
+          error: 'Failed to get yt-dlp version',
+          details: error.message
+        });
+      }
+    }
+
     console.log('Starting video download for URL:', url);
     // Create a unique filename
     const timestamp = Date.now();
