@@ -121,8 +121,11 @@ async function checkYtDlp() {
 
 app.post('/download', async (req, res) => {
   // Add CORS debug logging
-  console.log('Received request from origin:', req.headers.origin);
-  console.log('Request headers:', req.headers);
+  console.log('[Download] Request received:', {
+    origin: req.headers.origin,
+    url: req.body?.url,
+    timestamp: new Date().toISOString()
+  });
   
   if (!isServerReady) {
     // Check yt-dlp status
@@ -133,7 +136,7 @@ app.post('/download', async (req, res) => {
       message: 'Server is still initializing',
       details: `Server state: ${ytDlpStatus ? 'yt-dlp installed' : 'yt-dlp not installed'}`
     };
-    console.log('Server not ready:', serverState);
+    console.log('[Download] Server not ready:', serverState);
     return res.status(503).json(serverState);
   }
   
@@ -163,7 +166,7 @@ app.post('/download', async (req, res) => {
           executable: true
         });
       } catch (error) {
-        console.error('Version check failed:', error);
+        console.error('[Download] Version check failed:', error);
         return res.status(500).json({
           error: 'Failed to verify yt-dlp',
           details: error.message,
@@ -173,32 +176,85 @@ app.post('/download', async (req, res) => {
       }
     }
 
-    console.log('Starting video download for URL:', url);
+    console.log('[Download] Starting video download for URL:', url);
+    
+    // First verify yt-dlp is working
+    try {
+      const { stdout: version } = await execAsync('yt-dlp --version');
+      console.log('[Download] yt-dlp version check passed:', version.trim());
+    } catch (error) {
+      console.error('[Download] yt-dlp version check failed:', error);
+      return res.status(500).json({
+        error: 'yt-dlp is not working properly',
+        details: error.message
+      });
+    }
+    
     // Create a unique filename
     const timestamp = Date.now();
     const tempFilePath = path.join(tempDir, `video-${timestamp}.mp4`);
+    console.log('[Download] Temp file path:', tempFilePath);
 
-    // Download video using yt-dlp
-    const command = `yt-dlp -f "best[ext=mp4]" "${url}" -o "${tempFilePath}" --no-playlist --no-warnings`;
-    const { stdout, stderr } = await execAsync(command);
+    // Download video using yt-dlp with more verbose output
+    const command = `yt-dlp -f "best[ext=mp4]" "${url}" -o "${tempFilePath}" --no-playlist`;
+    console.log('[Download] Executing command:', command);
+    
+    try {
+      const { stdout, stderr } = await execAsync(command);
+      console.log('[Download] yt-dlp stdout:', stdout);
+      if (stderr) console.error('[Download] yt-dlp stderr:', stderr);
+    } catch (dlError) {
+      console.error('[Download] yt-dlp execution failed:', dlError);
+      return res.status(500).json({
+        error: 'Video download failed',
+        details: dlError.message,
+        command: command
+      });
+    }
+
+    // Verify the file exists and has content
+    try {
+      const stats = await fs.stat(tempFilePath);
+      console.log('[Download] File stats:', stats);
+      
+      if (stats.size === 0) {
+        throw new Error('Downloaded file is empty');
+      }
+    } catch (statError) {
+      console.error('[Download] File verification failed:', statError);
+      return res.status(500).json({
+        error: 'Failed to verify downloaded file',
+        details: statError.message
+      });
+    }
 
     // Read the file and send it as base64
-    const videoBuffer = await fs.readFile(tempFilePath);
-    const base64Video = videoBuffer.toString('base64');
+    try {
+      const videoBuffer = await fs.readFile(tempFilePath);
+      const base64Video = videoBuffer.toString('base64');
+      console.log('[Download] Successfully converted video to base64');
 
-    // Clean up the temporary file
-    await fs.unlink(tempFilePath);
+      // Clean up the temporary file
+      await fs.unlink(tempFilePath).catch(e => console.error('[Download] Cleanup error:', e));
 
-    res.json({
-      videoUrl: `data:video/mp4;base64,${base64Video}`,
-      message: 'Video downloaded successfully'
-    });
+      return res.json({
+        videoUrl: `data:video/mp4;base64,${base64Video}`,
+        message: 'Video downloaded successfully'
+      });
+    } catch (readError) {
+      console.error('[Download] Failed to read or encode video:', readError);
+      return res.status(500).json({
+        error: 'Failed to process downloaded video',
+        details: readError.message
+      });
+    }
 
   } catch (error) {
-    console.error('Error downloading video:', error);
+    console.error('[Download] Unhandled error:', error);
     res.status(500).json({ 
       error: 'Failed to download video',
-      details: error.message
+      details: error.message,
+      type: error.constructor.name
     });
   }
 });
@@ -272,6 +328,7 @@ app.get('/debug', async (req, res) => {
 
 // Add yt-dlp debug endpoint
 app.get('/debug/ytdlp', async (req, res) => {
+  console.log('[Debug] yt-dlp debug request received');
   try {
     const debugInfo = {
       status: {
@@ -287,48 +344,100 @@ app.get('/debug/ytdlp', async (req, res) => {
         uid: process.getuid?.(),
         gid: process.getgid?.(),
         platform: process.platform,
-        arch: process.arch
+        arch: process.arch,
+        nodeVersion: process.version
       },
       tests: []
     };
 
     try {
       // Test 1: Find yt-dlp
+      console.log('[Debug] Testing yt-dlp location...');
       const { stdout: location } = await execAsync('which yt-dlp');
       debugInfo.status.location = location.trim();
       debugInfo.status.installed = true;
       debugInfo.tests.push({ name: 'find_ytdlp', status: 'success', output: location.trim() });
+      console.log('[Debug] Found yt-dlp at:', location.trim());
     } catch (e) {
-      debugInfo.tests.push({ name: 'find_ytdlp', status: 'error', error: e.message });
+      console.error('[Debug] Failed to find yt-dlp:', e);
+      debugInfo.tests.push({ 
+        name: 'find_ytdlp', 
+        status: 'error', 
+        error: e.message,
+        PATH: process.env.PATH
+      });
     }
 
     if (debugInfo.status.installed) {
       try {
         // Test 2: Check version
+        console.log('[Debug] Testing yt-dlp version...');
         const { stdout: version } = await execAsync(`${debugInfo.status.location} --version`);
         debugInfo.status.version = version.trim();
         debugInfo.status.executable = true;
         debugInfo.tests.push({ name: 'version_check', status: 'success', output: version.trim() });
+        console.log('[Debug] yt-dlp version:', version.trim());
       } catch (e) {
-        debugInfo.tests.push({ name: 'version_check', status: 'error', error: e.message });
+        console.error('[Debug] Failed to get yt-dlp version:', e);
+        debugInfo.tests.push({ 
+          name: 'version_check', 
+          status: 'error', 
+          error: e.message,
+          command: `${debugInfo.status.location} --version`
+        });
       }
 
       try {
         // Test 3: Check help
+        console.log('[Debug] Testing yt-dlp help...');
         const { stdout: help } = await execAsync(`${debugInfo.status.location} --help`);
         debugInfo.status.helpWorks = true;
-        debugInfo.tests.push({ name: 'help_check', status: 'success', output: help.slice(0, 100) + '...' });
+        debugInfo.tests.push({ 
+          name: 'help_check', 
+          status: 'success', 
+          output: help.slice(0, 100) + '...',
+          fullHelp: help  // Include full help text for debugging
+        });
+        console.log('[Debug] yt-dlp help command works');
       } catch (e) {
-        debugInfo.tests.push({ name: 'help_check', status: 'error', error: e.message });
+        console.error('[Debug] Failed to get yt-dlp help:', e);
+        debugInfo.tests.push({ 
+          name: 'help_check', 
+          status: 'error', 
+          error: e.message,
+          command: `${debugInfo.status.location} --help`
+        });
+      }
+
+      // Additional test: Try a simple URL info fetch
+      try {
+        console.log('[Debug] Testing yt-dlp URL info fetch...');
+        const { stdout: info } = await execAsync(`${debugInfo.status.location} --dump-json "https://www.youtube.com/watch?v=dQw4w9WgXcQ" --no-download`);
+        debugInfo.tests.push({ 
+          name: 'url_info_check', 
+          status: 'success', 
+          output: 'URL info fetch successful'
+        });
+        console.log('[Debug] yt-dlp URL info fetch works');
+      } catch (e) {
+        console.error('[Debug] Failed to fetch URL info:', e);
+        debugInfo.tests.push({ 
+          name: 'url_info_check', 
+          status: 'error', 
+          error: e.message
+        });
       }
     }
 
+    console.log('[Debug] Sending debug info response');
     res.json(debugInfo);
   } catch (error) {
+    console.error('[Debug] Failed to collect debug info:', error);
     res.status(500).json({
       error: 'yt-dlp debug info collection failed',
       details: error.message,
-      stack: error.stack
+      stack: error.stack,
+      type: error.constructor.name
     });
   }
 });
