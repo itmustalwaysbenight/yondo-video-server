@@ -126,6 +126,34 @@ app.get('/health', async (req, res) => {
 // Download endpoint
 app.post('/download', async (req, res) => {
   const { url } = req.body;
+  let outputPath = null;
+  let cleanupDone = false;
+  
+  // Cleanup function
+  const cleanup = async () => {
+    if (cleanupDone) return;
+    cleanupDone = true;
+    
+    if (outputPath && fs.existsSync(outputPath)) {
+      try {
+        fs.unlinkSync(outputPath);
+        console.log('Cleaned up temp file during shutdown');
+      } catch (cleanupError) {
+        console.error('Error cleaning up temp file:', cleanupError);
+      }
+    }
+  };
+
+  // Handle process termination
+  const handleTermination = async () => {
+    console.log('Received termination signal during download');
+    await cleanup();
+    process.exit(0);
+  };
+
+  // Add termination handlers
+  process.on('SIGTERM', handleTermination);
+  process.on('SIGINT', handleTermination);
   
   if (!url) {
     return res.status(400).json({ 
@@ -135,7 +163,6 @@ app.post('/download', async (req, res) => {
   }
 
   console.log('Received download request for URL:', url);
-  let outputPath = null;
 
   try {
     // First verify the URL is accessible
@@ -219,29 +246,22 @@ app.post('/download', async (req, res) => {
           error: 'Error streaming video file'
         });
       }
+      cleanup();
+    });
+
+    // Clean up the file after streaming
+    readStream.on('end', () => {
+      cleanup();
+      // Remove termination handlers after successful completion
+      process.removeListener('SIGTERM', handleTermination);
+      process.removeListener('SIGINT', handleTermination);
     });
 
     readStream.pipe(res);
 
-    // Clean up the file after streaming
-    readStream.on('end', () => {
-      fs.unlink(outputPath, (err) => {
-        if (err) console.error('Error deleting temp file:', err);
-        else console.log('Temp file deleted successfully');
-      });
-    });
-
   } catch (error) {
     console.error('Server error:', error);
-    // Clean up the output file if it exists
-    if (outputPath && fs.existsSync(outputPath)) {
-      try {
-        fs.unlinkSync(outputPath);
-        console.log('Cleaned up temp file after error');
-      } catch (cleanupError) {
-        console.error('Error cleaning up temp file:', cleanupError);
-      }
-    }
+    await cleanup();
     
     if (!res.headersSent) {
       res.status(500).json({ 
@@ -250,6 +270,10 @@ app.post('/download', async (req, res) => {
         details: error.message 
       });
     }
+    
+    // Remove termination handlers after error
+    process.removeListener('SIGTERM', handleTermination);
+    process.removeListener('SIGINT', handleTermination);
   }
 });
 
